@@ -41,7 +41,7 @@ function getPathMetrics(svgElement: SVGSVGElement, element: SVGGraphicsElement) 
 export function simplifySvg(svgString: string, options: VectorizeOptions): SimplifyResult {
   const parser = new DOMParser();
   const documentNode = parser.parseFromString(svgString, 'image/svg+xml');
-  const svg = documentNode.documentElement as SVGSVGElement;
+  const svg = documentNode.documentElement as unknown as SVGSVGElement;
   const viewBox =
     svg.getAttribute('viewBox')?.split(/\s+/).map(Number).filter((value) => !Number.isNaN(value)) ?? [];
   const width = parseFloat(svg.getAttribute('width') || '') || viewBox[2] || svg.viewBox.baseVal.width || 0;

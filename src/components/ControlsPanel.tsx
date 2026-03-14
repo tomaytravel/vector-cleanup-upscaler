@@ -175,7 +175,12 @@ export function ControlsPanel(props: ControlsPanelProps) {
       <SectionCard title="Pipeline" description="처리 단계 상태를 표시합니다.">
         <div className="flex flex-wrap gap-2">
           {Object.entries(status).map(([key, value]) => (
-            <span key={key} className={`rounded-full px-3 py-1 text-xs font-semibold ${statusTone[value]}`}>
+            <span
+              key={key}
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                statusTone[value as ProcessingState[keyof ProcessingState]]
+              }`}
+            >
               {key}: {value}
             </span>
           ))}
