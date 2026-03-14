@@ -19,6 +19,22 @@ export function canvasToDataUrl(canvas: HTMLCanvasElement): string {
   return canvas.toDataURL('image/png');
 }
 
+export async function canvasToObjectUrl(canvas: HTMLCanvasElement): Promise<string> {
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) {
+    throw new Error('Failed to convert canvas to PNG blob.');
+  }
+  return URL.createObjectURL(blob);
+}
+
+export function disposeCanvas(canvas: HTMLCanvasElement | null | undefined) {
+  if (!canvas) {
+    return;
+  }
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
 export function sampleCanvasColor(
   canvas: HTMLCanvasElement,
   x: number,

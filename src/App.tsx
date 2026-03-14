@@ -15,8 +15,9 @@ import { buildDownloadName, readFileAsDataUrl } from './utils/file';
 import { colorToAlpha } from './utils/colorToAlpha';
 import { downloadCanvasAsPng } from './utils/download';
 import {
-  canvasToDataUrl,
+  canvasToObjectUrl,
   createCanvas,
+  disposeCanvas,
   hexToRgb,
   loadImage,
   rgbaToHex,
@@ -110,11 +111,14 @@ export default function App() {
       if (originalSrc?.startsWith('blob:')) {
         URL.revokeObjectURL(originalSrc);
       }
+      if (debugOverlay?.startsWith('blob:')) {
+        URL.revokeObjectURL(debugOverlay);
+      }
       if (finalPreview?.startsWith('blob:')) {
         URL.revokeObjectURL(finalPreview);
       }
     };
-  }, [finalPreview, originalSrc]);
+  }, [debugOverlay, finalPreview, originalSrc]);
 
   const handleFileSelect = async (selectedFile: File) => {
     setError(null);
@@ -169,7 +173,14 @@ export default function App() {
         const result = vectorizeConstellation(image, constellation);
         svg = result.svg;
         nextStats = result.stats;
-        setDebugOverlay(result.debugOverlayUrl);
+        const overlayUrl = await canvasToObjectUrl(result.debugOverlayCanvas);
+        disposeCanvas(result.debugOverlayCanvas);
+        setDebugOverlay((current) => {
+          if (current?.startsWith('blob:')) {
+            URL.revokeObjectURL(current);
+          }
+          return overlayUrl;
+        });
         setStatus((current) => ({ ...current, preprocess: 'done', vectorize: 'running' }));
       } else {
         setDebugOverlay(null);
@@ -206,7 +217,13 @@ export default function App() {
         : renderedCanvas;
 
       finalCanvasRef.current = outputCanvas;
-      setFinalPreview(canvasToDataUrl(outputCanvas));
+      const finalPreviewUrl = await canvasToObjectUrl(outputCanvas);
+      setFinalPreview((current) => {
+        if (current?.startsWith('blob:')) {
+          URL.revokeObjectURL(current);
+        }
+        return finalPreviewUrl;
+      });
       setStatus((current) => ({
         ...current,
         transparency: transparency.enabled ? 'done' : 'idle',

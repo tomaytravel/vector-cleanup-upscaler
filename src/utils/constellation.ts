@@ -1,5 +1,5 @@
 import { ConstellationOptions, VectorStatsData } from '../types';
-import { createCanvas } from './image';
+import { createCanvas, disposeCanvas } from './image';
 
 interface Point {
   x: number;
@@ -39,8 +39,7 @@ interface SkeletonNode {
 interface ConstellationResult {
   svg: string;
   stats: VectorStatsData;
-  maskCanvas: HTMLCanvasElement;
-  debugOverlayUrl: string;
+  debugOverlayCanvas: HTMLCanvasElement;
 }
 
 function buildMask(image: HTMLImageElement, threshold: number, invert: boolean) {
@@ -69,7 +68,8 @@ function buildMask(image: HTMLImageElement, threshold: number, invert: boolean) 
   }
 
   context.putImageData(imageData, 0, 0);
-  return { canvas, mask, imageData };
+  disposeCanvas(canvas);
+  return { mask, imageData };
 }
 
 function scaleMask(
@@ -110,7 +110,8 @@ function scaleMask(
   }
 
   context.putImageData(imageData, 0, 0);
-  return { canvas, mask, imageData };
+  disposeCanvas(canvas);
+  return { mask, imageData };
 }
 
 function getForegroundColor(image: HTMLImageElement, mask: Uint8Array) {
@@ -683,7 +684,7 @@ function buildDebugOverlay(
 
   context.putImageData(imageData, 0, 0);
   return {
-    url: canvas.toDataURL('image/png'),
+    canvas,
     missingPixelCount,
     excessPixelCount,
   };
@@ -1044,7 +1045,7 @@ export function vectorizeConstellation(
   const detectionScale = Math.max(1, options.detectionScale);
   const originalMaskData =
     detectionScale > 1 ? buildMask(image, options.threshold, options.invert) : null;
-  const { canvas, mask, imageData } = scaleMask(
+  const { mask, imageData } = scaleMask(
     image,
     options.threshold,
     options.invert,
@@ -1136,7 +1137,6 @@ export function vectorizeConstellation(
       missingPixelCount: debugOverlay.missingPixelCount,
       excessPixelCount: debugOverlay.excessPixelCount,
     },
-    maskCanvas: canvas,
-    debugOverlayUrl: debugOverlay.url,
+    debugOverlayCanvas: debugOverlay.canvas,
   };
 }
