@@ -60,6 +60,8 @@ export interface VectorStatsData {
   removedPaths: number;
   circleCount?: number;
   lineCount?: number;
+  missingPixelCount?: number;
+  excessPixelCount?: number;
 }
 
 export interface ProcessingState {

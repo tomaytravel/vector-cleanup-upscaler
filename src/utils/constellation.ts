@@ -40,6 +40,7 @@ interface ConstellationResult {
   svg: string;
   stats: VectorStatsData;
   maskCanvas: HTMLCanvasElement;
+  debugOverlayUrl: string;
 }
 
 function buildMask(image: HTMLImageElement, threshold: number, invert: boolean) {
@@ -632,6 +633,62 @@ function rasterizeFeaturesToMask(
   return mask;
 }
 
+function buildDebugOverlay(
+  width: number,
+  height: number,
+  originalMask: Uint8Array,
+  vectorMask: Uint8Array,
+) {
+  const canvas = createCanvas(width, height);
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Unable to create debug overlay canvas.');
+  }
+
+  const imageData = context.createImageData(width, height);
+  const { data } = imageData;
+  let missingPixelCount = 0;
+  let excessPixelCount = 0;
+
+  for (let i = 0; i < originalMask.length; i += 1) {
+    const index = i * 4;
+    const inOriginal = originalMask[i] === 1;
+    const inVector = vectorMask[i] === 1;
+
+    if (inOriginal && inVector) {
+      data[index] = 255;
+      data[index + 1] = 255;
+      data[index + 2] = 255;
+      data[index + 3] = 180;
+      continue;
+    }
+
+    if (inOriginal && !inVector) {
+      data[index] = 255;
+      data[index + 1] = 96;
+      data[index + 2] = 96;
+      data[index + 3] = 255;
+      missingPixelCount += 1;
+      continue;
+    }
+
+    if (!inOriginal && inVector) {
+      data[index] = 70;
+      data[index + 1] = 220;
+      data[index + 2] = 255;
+      data[index + 3] = 255;
+      excessPixelCount += 1;
+    }
+  }
+
+  context.putImageData(imageData, 0, 0);
+  return {
+    url: canvas.toDataURL('image/png'),
+    missingPixelCount,
+    excessPixelCount,
+  };
+}
+
 function recoverMissingFeatures(
   sourceMask: Uint8Array,
   width: number,
@@ -878,7 +935,20 @@ export function vectorizeConstellation(
   const normalized = downscaleFeatures(recovered.circles, recovered.lines, detectionScale);
   const lines = normalized.lines;
   const circles = normalized.circles;
-  const stroke = getForegroundColor(image, originalMaskData?.mask ?? mask);
+  const finalOriginalMask = originalMaskData?.mask ?? mask;
+  const vectorMaskAtOutputScale = rasterizeFeaturesToMask(
+    image.naturalWidth,
+    image.naturalHeight,
+    circles,
+    lines,
+  );
+  const debugOverlay = buildDebugOverlay(
+    image.naturalWidth,
+    image.naturalHeight,
+    finalOriginalMask,
+    vectorMaskAtOutputScale,
+  );
+  const stroke = getForegroundColor(image, finalOriginalMask);
   const svg = renderConstellationSvg(image.naturalWidth, image.naturalHeight, circles, lines, stroke);
 
   return {
@@ -890,7 +960,10 @@ export function vectorizeConstellation(
       removedPaths: Math.max(0, components.length - circles.length - lines.length) + recovered.recoveredCount,
       circleCount: circles.length,
       lineCount: lines.length,
+      missingPixelCount: debugOverlay.missingPixelCount,
+      excessPixelCount: debugOverlay.excessPixelCount,
     },
     maskCanvas: canvas,
+    debugOverlayUrl: debugOverlay.url,
   };
 }

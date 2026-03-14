@@ -88,6 +88,7 @@ export default function App() {
   const [originalSrc, setOriginalSrc] = useState<string | null>(null);
   const [vectorSvg, setVectorSvg] = useState<string | null>(null);
   const [finalPreview, setFinalPreview] = useState<string | null>(null);
+  const [debugOverlay, setDebugOverlay] = useState<string | null>(null);
   const [preprocess, setPreprocess] = useState<PreprocessOptions>(initialPreprocess);
   const [vectorize, setVectorize] = useState<VectorizeOptions>(initialVectorize);
   const [constellation, setConstellation] = useState<ConstellationOptions>(initialConstellation);
@@ -121,6 +122,7 @@ export default function App() {
     setFile(selectedFile);
     setVectorSvg(null);
     setFinalPreview(null);
+    setDebugOverlay(null);
     setStats(null);
     setStatus({
       ...initialStatus,
@@ -167,8 +169,10 @@ export default function App() {
         const result = vectorizeConstellation(image, constellation);
         svg = result.svg;
         nextStats = result.stats;
+        setDebugOverlay(result.debugOverlayUrl);
         setStatus((current) => ({ ...current, preprocess: 'done', vectorize: 'running' }));
       } else {
+        setDebugOverlay(null);
         const preprocessed = preprocessImage(image, preprocess);
         setStatus((current) => ({ ...current, preprocess: 'done', vectorize: 'running' }));
         const rawSvg = vectorizeImageData(preprocessed.imageData);
@@ -227,6 +231,7 @@ export default function App() {
     setOriginalSrc(null);
     setVectorSvg(null);
     setFinalPreview(null);
+    setDebugOverlay(null);
     setStats(null);
     setError(null);
     setStatus(initialStatus);
@@ -323,7 +328,7 @@ export default function App() {
             />
           </aside>
 
-          <section className="grid min-w-0 gap-6 xl:grid-cols-3">
+          <section className={`grid min-w-0 gap-6 ${appMode === 'constellation' ? 'xl:grid-cols-2' : 'xl:grid-cols-3'}`}>
             <PreviewPane
               title="Original Preview"
               src={originalSrc}
@@ -347,6 +352,15 @@ export default function App() {
               onZoomChange={setZoom}
               checkerboard
             />
+            {appMode === 'constellation' ? (
+              <PreviewPane
+                title="Debug Overlay"
+                src={debugOverlay}
+                zoom={zoom}
+                onZoomChange={setZoom}
+                checkerboard
+              />
+            ) : null}
           </section>
         </main>
 

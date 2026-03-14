@@ -39,6 +39,18 @@ export function VectorStats({ stats }: VectorStatsProps) {
           <p className="mt-2 text-2xl font-semibold text-ink">{stats.lineCount}</p>
         </div>
       ) : null}
+      {typeof stats.missingPixelCount === 'number' ? (
+        <div className="rounded-2xl bg-white/[0.04] p-3">
+          <p className="text-mute">Missing pixels</p>
+          <p className="mt-2 text-2xl font-semibold text-rose-300">{stats.missingPixelCount}</p>
+        </div>
+      ) : null}
+      {typeof stats.excessPixelCount === 'number' ? (
+        <div className="rounded-2xl bg-white/[0.04] p-3">
+          <p className="text-mute">Excess pixels</p>
+          <p className="mt-2 text-2xl font-semibold text-cyan-300">{stats.excessPixelCount}</p>
+        </div>
+      ) : null}
     </div>
   );
 }
