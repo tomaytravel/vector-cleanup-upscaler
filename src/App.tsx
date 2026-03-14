@@ -46,12 +46,12 @@ const initialConstellation: ConstellationOptions = {
   threshold: 72,
   invert: false,
   minDotArea: 3,
-  maxDotArea: 180,
-  dotCircularity: 0.28,
-  dotScale: 1.05,
-  minLineLength: 4,
-  maxLineThickness: 10,
-  strokeWidthScale: 1.15,
+  maxDotArea: 72,
+  dotCircularity: 0.36,
+  dotScale: 0.62,
+  minLineLength: 6,
+  maxLineThickness: 2.2,
+  strokeWidthScale: 0.72,
 };
 
 const initialScale: ScaleOptions = {

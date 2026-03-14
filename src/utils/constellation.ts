@@ -189,17 +189,17 @@ function classifyDots(
     const aspect = boxWidth > boxHeight ? boxHeight / boxWidth : boxWidth / boxHeight;
     const fillRatio = component.area / (boxWidth * boxHeight);
     const circularity = aspect * fillRatio;
+    const equivalentRadius = Math.sqrt(component.area / Math.PI);
     const isDot =
       component.area >= options.minDotArea &&
       component.area <= options.maxDotArea &&
       circularity >= options.dotCircularity;
 
     if (isDot) {
-      const baseRadius = Math.max(boxWidth, boxHeight) / 2;
       dots.push({
         cx: component.centroid.x,
         cy: component.centroid.y,
-        radius: Math.max(0.8, baseRadius * options.dotScale),
+        radius: Math.max(0.45, equivalentRadius * options.dotScale),
       });
       continue;
     }
@@ -225,6 +225,12 @@ function detectLines(
     if (component.area < 2) {
       continue;
     }
+
+    const boxWidth = component.maxX - component.minX + 1;
+    const boxHeight = component.maxY - component.minY + 1;
+    const longAxis = Math.max(boxWidth, boxHeight);
+    const shortAxis = Math.max(1, Math.min(boxWidth, boxHeight));
+    const elongation = longAxis / shortAxis;
 
     const centroid = component.centroid;
     let covXX = 0;
@@ -260,13 +266,15 @@ function detectLines(
     }
 
     const length = maxProjection - minProjection;
-    if (length < options.minLineLength) {
+    if (length < options.minLineLength || elongation < 2.2) {
       continue;
     }
 
+    const varianceThickness = 2 * Math.sqrt(normalVariance / component.points.length);
+    const bboxThickness = shortAxis * 0.9;
     const thickness = Math.max(
-      0.8,
-      Math.min(options.maxLineThickness, 2 * Math.sqrt(normalVariance / component.points.length) + 0.75),
+      0.45,
+      Math.min(options.maxLineThickness, Math.min(varianceThickness, bboxThickness)),
     );
 
     lines.push({
@@ -274,7 +282,7 @@ function detectLines(
       y1: centroid.y + minProjection * dirY,
       x2: centroid.x + maxProjection * dirX,
       y2: centroid.y + maxProjection * dirY,
-      strokeWidth: Math.max(0.75, thickness * options.strokeWidthScale),
+      strokeWidth: Math.max(0.4, thickness * options.strokeWidthScale),
     });
   }
 
