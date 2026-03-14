@@ -220,13 +220,14 @@ function classifyDots(
 
 function detectLines(
   mask: Uint8Array,
+  sourceMask: Uint8Array,
   width: number,
   height: number,
   options: ConstellationOptions,
 ): LineFeature[] {
   const skeleton = skeletonize(mask, width, height);
   const nodes = findSkeletonNodes(skeleton, width, height);
-  return traceSkeletonLines(skeleton, mask, width, height, nodes, options);
+  return traceSkeletonLines(skeleton, sourceMask, width, height, nodes, options);
 }
 
 function distanceSquared(a: Point, b: Point) {
@@ -549,6 +550,92 @@ function traceSkeletonLines(
   return lines;
 }
 
+function rasterizeFeaturesToMask(
+  width: number,
+  height: number,
+  circles: CircleFeature[],
+  lines: LineFeature[],
+): Uint8Array {
+  const canvas = createCanvas(width, height);
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) {
+    throw new Error('Unable to create validation canvas.');
+  }
+
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = '#ffffff';
+  context.strokeStyle = '#ffffff';
+
+  for (const line of lines) {
+    context.beginPath();
+    context.lineCap = 'round';
+    context.lineWidth = Math.max(1, line.strokeWidth);
+    context.moveTo(line.x1, line.y1);
+    context.lineTo(line.x2, line.y2);
+    context.stroke();
+  }
+
+  for (const circle of circles) {
+    context.beginPath();
+    context.arc(circle.cx, circle.cy, Math.max(0.5, circle.radius), 0, Math.PI * 2);
+    context.fill();
+  }
+
+  const { data } = context.getImageData(0, 0, width, height);
+  const mask = new Uint8Array(width * height);
+
+  for (let i = 0; i < mask.length; i += 1) {
+    mask[i] = data[i * 4 + 3] > 0 ? 1 : 0;
+  }
+
+  return mask;
+}
+
+function recoverMissingFeatures(
+  sourceMask: Uint8Array,
+  width: number,
+  height: number,
+  circles: CircleFeature[],
+  lines: LineFeature[],
+  options: ConstellationOptions,
+): { circles: CircleFeature[]; lines: LineFeature[]; recoveredCount: number } {
+  const vectorMask = rasterizeFeaturesToMask(width, height, circles, lines);
+  const residualMask = new Uint8Array(sourceMask.length);
+
+  for (let i = 0; i < sourceMask.length; i += 1) {
+    residualMask[i] = sourceMask[i] && !vectorMask[i] ? 1 : 0;
+  }
+
+  const residualComponents = connectedComponents(residualMask, width, height);
+  if (!residualComponents.length) {
+    return { circles, lines, recoveredCount: 0 };
+  }
+
+  const { dots: recoveredDots, lineMask: recoveredLineMask } = classifyDots(
+    residualComponents,
+    options,
+    width,
+    height,
+  );
+  const recoveredLines = detectLines(recoveredLineMask, sourceMask, width, height, options);
+
+  if (!recoveredDots.length && !recoveredLines.length) {
+    return { circles, lines, recoveredCount: 0 };
+  }
+
+  const graph = snapLinesToCircles(
+    [...lines, ...recoveredLines],
+    [...circles, ...recoveredDots],
+    options,
+  );
+
+  return {
+    circles: graph.circles,
+    lines: graph.lines,
+    recoveredCount: recoveredDots.length + recoveredLines.length,
+  };
+}
+
 function snapLinesToCircles(
   lines: LineFeature[],
   circles: CircleFeature[],
@@ -681,10 +768,18 @@ export function vectorizeConstellation(
   const { canvas, mask, imageData } = buildMask(image, options.threshold, options.invert);
   const components = connectedComponents(mask, imageData.width, imageData.height);
   const { dots, lineMask } = classifyDots(components, options, imageData.width, imageData.height);
-  const rawLines = detectLines(lineMask, imageData.width, imageData.height, options);
+  const rawLines = detectLines(lineMask, mask, imageData.width, imageData.height, options);
   const graph = snapLinesToCircles(rawLines, dots, options);
-  const lines = graph.lines;
-  const circles = graph.circles;
+  const recovered = recoverMissingFeatures(
+    mask,
+    imageData.width,
+    imageData.height,
+    graph.circles,
+    graph.lines,
+    options,
+  );
+  const lines = recovered.lines;
+  const circles = recovered.circles;
   const stroke = getForegroundColor(image, mask);
   const svg = renderConstellationSvg(imageData.width, imageData.height, circles, lines, stroke);
 
@@ -694,7 +789,7 @@ export function vectorizeConstellation(
       pathCount: circles.length + lines.length,
       width: imageData.width,
       height: imageData.height,
-      removedPaths: Math.max(0, components.length - circles.length - lines.length),
+      removedPaths: Math.max(0, components.length - circles.length - lines.length) + recovered.recoveredCount,
       circleCount: circles.length,
       lineCount: lines.length,
     },
