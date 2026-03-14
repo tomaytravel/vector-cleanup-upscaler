@@ -295,16 +295,47 @@ function distanceSquared(a: Point, b: Point) {
   return dx * dx + dy * dy;
 }
 
+function mergeCircles(circles: CircleFeature[], options: ConstellationOptions): CircleFeature[] {
+  const merged: CircleFeature[] = [];
+
+  for (const circle of circles) {
+    let attached = false;
+
+    for (const existing of merged) {
+      const joinDistance =
+        Math.max(options.endpointSnapDistance * 0.45, Math.max(circle.radius, existing.radius) * 1.8);
+      const currentDistance = Math.sqrt(
+        distanceSquared(
+          { x: circle.cx, y: circle.cy },
+          { x: existing.cx, y: existing.cy },
+        ),
+      );
+
+      if (currentDistance <= joinDistance) {
+        existing.cx = (existing.cx + circle.cx) / 2;
+        existing.cy = (existing.cy + circle.cy) / 2;
+        existing.radius = Math.max(existing.radius, circle.radius);
+        attached = true;
+        break;
+      }
+    }
+
+    if (!attached) {
+      merged.push({ ...circle });
+    }
+  }
+
+  return merged;
+}
+
 function snapLinesToCircles(
   lines: LineFeature[],
   circles: CircleFeature[],
   options: ConstellationOptions,
-): LineFeature[] {
-  if (!circles.length) {
-    return lines;
-  }
+): { lines: LineFeature[]; circles: CircleFeature[] } {
+  const workingCircles = [...circles.map((circle) => ({ ...circle }))];
 
-  return lines.map((line) => {
+  const snappedLines = lines.map((line) => {
     const start = { x: line.x1, y: line.y1 };
     const end = { x: line.x2, y: line.y2 };
     let bestStart = start;
@@ -312,7 +343,7 @@ function snapLinesToCircles(
     let startDistance = Number.POSITIVE_INFINITY;
     let endDistance = Number.POSITIVE_INFINITY;
 
-    for (const circle of circles) {
+    for (const circle of workingCircles) {
       const center = { x: circle.cx, y: circle.cy };
       const currentStartDistance = distanceSquared(start, center);
       const currentEndDistance = distanceSquared(end, center);
@@ -333,6 +364,22 @@ function snapLinesToCircles(
       }
     }
 
+    if (startDistance === Number.POSITIVE_INFINITY) {
+      workingCircles.push({
+        cx: start.x,
+        cy: start.y,
+        radius: Math.max(0.45, line.strokeWidth * 0.9),
+      });
+    }
+
+    if (endDistance === Number.POSITIVE_INFINITY) {
+      workingCircles.push({
+        cx: end.x,
+        cy: end.y,
+        radius: Math.max(0.45, line.strokeWidth * 0.9),
+      });
+    }
+
     return {
       ...line,
       x1: bestStart.x,
@@ -341,6 +388,45 @@ function snapLinesToCircles(
       y2: bestEnd.y,
     };
   });
+
+  const mergedCircles = mergeCircles(workingCircles, options);
+  const resnappedLines = snappedLines.map((line) => {
+    const start = { x: line.x1, y: line.y1 };
+    const end = { x: line.x2, y: line.y2 };
+    let bestStart = start;
+    let bestEnd = end;
+    let startDistance = Number.POSITIVE_INFINITY;
+    let endDistance = Number.POSITIVE_INFINITY;
+
+    for (const circle of mergedCircles) {
+      const center = { x: circle.cx, y: circle.cy };
+      const currentStartDistance = distanceSquared(start, center);
+      const currentEndDistance = distanceSquared(end, center);
+
+      if (currentStartDistance < startDistance) {
+        startDistance = currentStartDistance;
+        bestStart = center;
+      }
+
+      if (currentEndDistance < endDistance) {
+        endDistance = currentEndDistance;
+        bestEnd = center;
+      }
+    }
+
+    return {
+      ...line,
+      x1: bestStart.x,
+      y1: bestStart.y,
+      x2: bestEnd.x,
+      y2: bestEnd.y,
+    };
+  });
+
+  return {
+    lines: resnappedLines,
+    circles: mergedCircles,
+  };
 }
 
 function renderConstellationSvg(
@@ -375,18 +461,20 @@ export function vectorizeConstellation(
   const components = connectedComponents(mask, imageData.width, imageData.height);
   const { dots, lineMask } = classifyDots(components, options, imageData.width, imageData.height);
   const rawLines = detectLines(lineMask, imageData.width, imageData.height, options);
-  const lines = snapLinesToCircles(rawLines, dots, options);
+  const graph = snapLinesToCircles(rawLines, dots, options);
+  const lines = graph.lines;
+  const circles = graph.circles;
   const stroke = getForegroundColor(image, mask);
-  const svg = renderConstellationSvg(imageData.width, imageData.height, dots, lines, stroke);
+  const svg = renderConstellationSvg(imageData.width, imageData.height, circles, lines, stroke);
 
   return {
     svg,
     stats: {
-      pathCount: dots.length + lines.length,
+      pathCount: circles.length + lines.length,
       width: imageData.width,
       height: imageData.height,
-      removedPaths: Math.max(0, components.length - dots.length - lines.length),
-      circleCount: dots.length,
+      removedPaths: Math.max(0, components.length - circles.length - lines.length),
+      circleCount: circles.length,
       lineCount: lines.length,
     },
     maskCanvas: canvas,
