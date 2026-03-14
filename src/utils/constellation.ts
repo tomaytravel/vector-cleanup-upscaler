@@ -689,7 +689,77 @@ function buildDebugOverlay(
   };
 }
 
+function buildDiffMasks(originalMask: Uint8Array, vectorMask: Uint8Array) {
+  const missingMask = new Uint8Array(originalMask.length);
+  const excessMask = new Uint8Array(originalMask.length);
+  let missingPixelCount = 0;
+  let excessPixelCount = 0;
+
+  for (let i = 0; i < originalMask.length; i += 1) {
+    if (originalMask[i] && !vectorMask[i]) {
+      missingMask[i] = 1;
+      missingPixelCount += 1;
+    }
+    if (!originalMask[i] && vectorMask[i]) {
+      excessMask[i] = 1;
+      excessPixelCount += 1;
+    }
+  }
+
+  return {
+    missingMask,
+    excessMask,
+    missingPixelCount,
+    excessPixelCount,
+  };
+}
+
+function rasterizeSingleCircle(width: number, height: number, circle: CircleFeature): Uint8Array {
+  return rasterizeFeaturesToMask(width, height, [circle], []);
+}
+
+function rasterizeSingleLine(width: number, height: number, line: LineFeature): Uint8Array {
+  return rasterizeFeaturesToMask(width, height, [], [line]);
+}
+
+function scoreMaskAgainstSource(featureMask: Uint8Array, sourceMask: Uint8Array) {
+  let overlap = 0;
+  let outside = 0;
+  for (let i = 0; i < featureMask.length; i += 1) {
+    if (!featureMask[i]) {
+      continue;
+    }
+    if (sourceMask[i]) {
+      overlap += 1;
+    } else {
+      outside += 1;
+    }
+  }
+  return { overlap, outside };
+}
+
+function pruneExcessFeatures(
+  sourceMask: Uint8Array,
+  width: number,
+  height: number,
+  circles: CircleFeature[],
+  lines: LineFeature[],
+) {
+  const keptCircles = circles.filter((circle) => {
+    const score = scoreMaskAgainstSource(rasterizeSingleCircle(width, height, circle), sourceMask);
+    return score.overlap >= score.outside;
+  });
+
+  const keptLines = lines.filter((line) => {
+    const score = scoreMaskAgainstSource(rasterizeSingleLine(width, height, line), sourceMask);
+    return score.overlap >= score.outside;
+  });
+
+  return { circles: keptCircles, lines: keptLines };
+}
+
 function recoverMissingFeatures(
+  missingMask: Uint8Array,
   sourceMask: Uint8Array,
   width: number,
   height: number,
@@ -697,14 +767,7 @@ function recoverMissingFeatures(
   lines: LineFeature[],
   options: ConstellationOptions,
 ): { circles: CircleFeature[]; lines: LineFeature[]; recoveredCount: number } {
-  const vectorMask = rasterizeFeaturesToMask(width, height, circles, lines);
-  const residualMask = new Uint8Array(sourceMask.length);
-
-  for (let i = 0; i < sourceMask.length; i += 1) {
-    residualMask[i] = sourceMask[i] && !vectorMask[i] ? 1 : 0;
-  }
-
-  const residualComponents = connectedComponents(residualMask, width, height);
+  const residualComponents = connectedComponents(missingMask, width, height);
   if (!residualComponents.length) {
     return { circles, lines, recoveredCount: 0 };
   }
@@ -924,15 +987,46 @@ export function vectorizeConstellation(
   const { dots, lineMask } = classifyDots(components, options, imageData.width, imageData.height);
   const rawLines = detectLines(lineMask, mask, imageData.width, imageData.height, options);
   const graph = snapLinesToCircles(rawLines, dots, options);
-  const recovered = recoverMissingFeatures(
-    mask,
-    imageData.width,
-    imageData.height,
-    graph.circles,
-    graph.lines,
-    options,
-  );
-  const normalized = downscaleFeatures(recovered.circles, recovered.lines, detectionScale);
+  let workingCircles = graph.circles;
+  let workingLines = graph.lines;
+  let recoveredCount = 0;
+
+  for (let pass = 0; pass < 2; pass += 1) {
+    const currentMask = rasterizeFeaturesToMask(
+      imageData.width,
+      imageData.height,
+      workingCircles,
+      workingLines,
+    );
+    const diff = buildDiffMasks(mask, currentMask);
+    if (!diff.missingPixelCount && !diff.excessPixelCount) {
+      break;
+    }
+
+    const recovered = recoverMissingFeatures(
+      diff.missingMask,
+      mask,
+      imageData.width,
+      imageData.height,
+      workingCircles,
+      workingLines,
+      options,
+    );
+
+    recoveredCount += recovered.recoveredCount;
+    const pruned = pruneExcessFeatures(
+      mask,
+      imageData.width,
+      imageData.height,
+      recovered.circles,
+      recovered.lines,
+    );
+
+    workingCircles = pruned.circles;
+    workingLines = pruned.lines;
+  }
+
+  const normalized = downscaleFeatures(workingCircles, workingLines, detectionScale);
   const lines = normalized.lines;
   const circles = normalized.circles;
   const finalOriginalMask = originalMaskData?.mask ?? mask;
@@ -957,7 +1051,7 @@ export function vectorizeConstellation(
       pathCount: circles.length + lines.length,
       width: image.naturalWidth,
       height: image.naturalHeight,
-      removedPaths: Math.max(0, components.length - circles.length - lines.length) + recovered.recoveredCount,
+      removedPaths: Math.max(0, components.length - circles.length - lines.length) + recoveredCount,
       circleCount: circles.length,
       lineCount: lines.length,
       missingPixelCount: debugOverlay.missingPixelCount,
