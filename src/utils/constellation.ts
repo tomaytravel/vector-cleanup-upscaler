@@ -71,6 +71,47 @@ function buildMask(image: HTMLImageElement, threshold: number, invert: boolean) 
   return { canvas, mask, imageData };
 }
 
+function scaleMask(
+  image: HTMLImageElement,
+  threshold: number,
+  invert: boolean,
+  scale: number,
+) {
+  if (scale <= 1) {
+    return buildMask(image, threshold, invert);
+  }
+
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = createCanvas(width, height);
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) {
+    throw new Error('Unable to create scaled constellation preprocessing context.');
+  }
+
+  context.imageSmoothingEnabled = false;
+  context.drawImage(image, 0, 0, width, height);
+  const imageData = context.getImageData(0, 0, width, height);
+  const { data } = imageData;
+  const mask = new Uint8Array(width * height);
+
+  for (let i = 0; i < width * height; i += 1) {
+    const index = i * 4;
+    const alpha = data[index + 3];
+    const signal = alpha > 0 ? Math.max(data[index], data[index + 1], data[index + 2]) : 0;
+    const isForeground = invert ? signal <= threshold : signal >= threshold;
+    mask[i] = isForeground ? 1 : 0;
+    const value = isForeground ? 255 : 0;
+    data[index] = value;
+    data[index + 1] = value;
+    data[index + 2] = value;
+    data[index + 3] = 255;
+  }
+
+  context.putImageData(imageData, 0, 0);
+  return { canvas, mask, imageData };
+}
+
 function getForegroundColor(image: HTMLImageElement, mask: Uint8Array) {
   const canvas = createCanvas(image.naturalWidth, image.naturalHeight);
   const context = canvas.getContext('2d', { willReadFrequently: true });
@@ -618,21 +659,69 @@ function recoverMissingFeatures(
     height,
   );
   const recoveredLines = detectLines(recoveredLineMask, sourceMask, width, height, options);
+  const microDots = residualComponents
+    .filter((component) => component.area >= options.microDotArea && component.area < options.minDotArea)
+    .map((component) => ({
+      cx: component.centroid.x,
+      cy: component.centroid.y,
+      radius: Math.max(0.4, Math.sqrt(component.area / Math.PI) * Math.max(0.55, options.dotScale)),
+    }));
 
-  if (!recoveredDots.length && !recoveredLines.length) {
+  const microLines = residualComponents
+    .filter((component) => {
+      const boxWidth = component.maxX - component.minX + 1;
+      const boxHeight = component.maxY - component.minY + 1;
+      const length = Math.max(boxWidth, boxHeight);
+      const thickness = Math.min(boxWidth, boxHeight);
+      return component.area >= 2 && length >= options.microLineLength && thickness <= 2;
+    })
+    .map((component) => ({
+      x1: component.minX,
+      y1: component.minY,
+      x2: component.maxX,
+      y2: component.maxY,
+      strokeWidth: 0.6,
+    }));
+
+  if (!recoveredDots.length && !recoveredLines.length && !microDots.length && !microLines.length) {
     return { circles, lines, recoveredCount: 0 };
   }
 
   const graph = snapLinesToCircles(
-    [...lines, ...recoveredLines],
-    [...circles, ...recoveredDots],
+    [...lines, ...recoveredLines, ...microLines],
+    [...circles, ...recoveredDots, ...microDots],
     options,
   );
 
   return {
     circles: graph.circles,
     lines: graph.lines,
-    recoveredCount: recoveredDots.length + recoveredLines.length,
+    recoveredCount: recoveredDots.length + recoveredLines.length + microDots.length + microLines.length,
+  };
+}
+
+function downscaleFeatures(
+  circles: CircleFeature[],
+  lines: LineFeature[],
+  scale: number,
+): { circles: CircleFeature[]; lines: LineFeature[] } {
+  if (scale <= 1) {
+    return { circles, lines };
+  }
+
+  return {
+    circles: circles.map((circle) => ({
+      cx: circle.cx / scale,
+      cy: circle.cy / scale,
+      radius: circle.radius / scale,
+    })),
+    lines: lines.map((line) => ({
+      x1: line.x1 / scale,
+      y1: line.y1 / scale,
+      x2: line.x2 / scale,
+      y2: line.y2 / scale,
+      strokeWidth: line.strokeWidth / scale,
+    })),
   };
 }
 
@@ -765,7 +854,15 @@ export function vectorizeConstellation(
   image: HTMLImageElement,
   options: ConstellationOptions,
 ): ConstellationResult {
-  const { canvas, mask, imageData } = buildMask(image, options.threshold, options.invert);
+  const detectionScale = Math.max(1, options.detectionScale);
+  const originalMaskData =
+    detectionScale > 1 ? buildMask(image, options.threshold, options.invert) : null;
+  const { canvas, mask, imageData } = scaleMask(
+    image,
+    options.threshold,
+    options.invert,
+    detectionScale,
+  );
   const components = connectedComponents(mask, imageData.width, imageData.height);
   const { dots, lineMask } = classifyDots(components, options, imageData.width, imageData.height);
   const rawLines = detectLines(lineMask, mask, imageData.width, imageData.height, options);
@@ -778,17 +875,18 @@ export function vectorizeConstellation(
     graph.lines,
     options,
   );
-  const lines = recovered.lines;
-  const circles = recovered.circles;
-  const stroke = getForegroundColor(image, mask);
-  const svg = renderConstellationSvg(imageData.width, imageData.height, circles, lines, stroke);
+  const normalized = downscaleFeatures(recovered.circles, recovered.lines, detectionScale);
+  const lines = normalized.lines;
+  const circles = normalized.circles;
+  const stroke = getForegroundColor(image, originalMaskData?.mask ?? mask);
+  const svg = renderConstellationSvg(image.naturalWidth, image.naturalHeight, circles, lines, stroke);
 
   return {
     svg,
     stats: {
       pathCount: circles.length + lines.length,
-      width: imageData.width,
-      height: imageData.height,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
       removedPaths: Math.max(0, components.length - circles.length - lines.length) + recovered.recoveredCount,
       circleCount: circles.length,
       lineCount: lines.length,

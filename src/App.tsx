@@ -45,6 +45,7 @@ const initialVectorize: VectorizeOptions = {
 const initialConstellation: ConstellationOptions = {
   threshold: 72,
   invert: false,
+  detectionScale: 2,
   minDotArea: 3,
   maxDotArea: 72,
   dotCircularity: 0.36,
@@ -53,6 +54,8 @@ const initialConstellation: ConstellationOptions = {
   maxLineThickness: 2.2,
   strokeWidthScale: 0.72,
   endpointSnapDistance: 14,
+  microDotArea: 1,
+  microLineLength: 2,
 };
 
 const initialScale: ScaleOptions = {

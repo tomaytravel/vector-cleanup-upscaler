@@ -24,6 +24,7 @@ export interface VectorizeOptions {
 export interface ConstellationOptions {
   threshold: number;
   invert: boolean;
+  detectionScale: number;
   minDotArea: number;
   maxDotArea: number;
   dotCircularity: number;
@@ -32,6 +33,8 @@ export interface ConstellationOptions {
   maxLineThickness: number;
   strokeWidthScale: number;
   endpointSnapDistance: number;
+  microDotArea: number;
+  microLineLength: number;
 }
 
 export interface ScaleOptions {

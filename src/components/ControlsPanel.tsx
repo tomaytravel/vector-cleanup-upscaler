@@ -147,6 +147,20 @@ export function ControlsPanel(props: ControlsPanelProps) {
                 className="mt-2 w-full"
               />
             </label>
+            <label className="block text-sm text-mute">
+              Detection scale: <span className="font-semibold text-ink">{constellation.detectionScale.toFixed(1)}x</span>
+              <input
+                type="range"
+                min={1}
+                max={3}
+                step={0.5}
+                value={constellation.detectionScale}
+                onChange={(event) =>
+                  onConstellationChange({ detectionScale: Number(event.target.value) })
+                }
+                className="mt-2 w-full"
+              />
+            </label>
             <div className="grid grid-cols-2 gap-3">
               <label className="text-sm text-mute">
                 Min dot area
@@ -201,6 +215,32 @@ export function ControlsPanel(props: ControlsPanelProps) {
                 className="mt-2 w-full"
               />
             </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-sm text-mute">
+                Micro dot area
+                <input
+                  type="number"
+                  min={1}
+                  value={constellation.microDotArea}
+                  onChange={(event) =>
+                    onConstellationChange({ microDotArea: Number(event.target.value) })
+                  }
+                  className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/80 px-3 py-2 text-ink"
+                />
+              </label>
+              <label className="text-sm text-mute">
+                Micro line length
+                <input
+                  type="number"
+                  min={1}
+                  value={constellation.microLineLength}
+                  onChange={(event) =>
+                    onConstellationChange({ microLineLength: Number(event.target.value) })
+                  }
+                  className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/80 px-3 py-2 text-ink"
+                />
+              </label>
+            </div>
             <label className="flex items-center gap-2 rounded-2xl bg-white/[0.04] px-3 py-3 text-sm text-ink">
               <input
                 type="checkbox"
