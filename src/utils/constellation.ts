@@ -289,6 +289,60 @@ function detectLines(
   return lines;
 }
 
+function distanceSquared(a: Point, b: Point) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
+
+function snapLinesToCircles(
+  lines: LineFeature[],
+  circles: CircleFeature[],
+  options: ConstellationOptions,
+): LineFeature[] {
+  if (!circles.length) {
+    return lines;
+  }
+
+  return lines.map((line) => {
+    const start = { x: line.x1, y: line.y1 };
+    const end = { x: line.x2, y: line.y2 };
+    let bestStart = start;
+    let bestEnd = end;
+    let startDistance = Number.POSITIVE_INFINITY;
+    let endDistance = Number.POSITIVE_INFINITY;
+
+    for (const circle of circles) {
+      const center = { x: circle.cx, y: circle.cy };
+      const currentStartDistance = distanceSquared(start, center);
+      const currentEndDistance = distanceSquared(end, center);
+      const snapDistance = Math.max(
+        options.endpointSnapDistance,
+        circle.radius * 3 + line.strokeWidth * 2,
+      );
+      const snapDistanceSquared = snapDistance * snapDistance;
+
+      if (currentStartDistance < startDistance && currentStartDistance <= snapDistanceSquared) {
+        startDistance = currentStartDistance;
+        bestStart = center;
+      }
+
+      if (currentEndDistance < endDistance && currentEndDistance <= snapDistanceSquared) {
+        endDistance = currentEndDistance;
+        bestEnd = center;
+      }
+    }
+
+    return {
+      ...line,
+      x1: bestStart.x,
+      y1: bestStart.y,
+      x2: bestEnd.x,
+      y2: bestEnd.y,
+    };
+  });
+}
+
 function renderConstellationSvg(
   width: number,
   height: number,
@@ -320,7 +374,8 @@ export function vectorizeConstellation(
   const { canvas, mask, imageData } = buildMask(image, options.threshold, options.invert);
   const components = connectedComponents(mask, imageData.width, imageData.height);
   const { dots, lineMask } = classifyDots(components, options, imageData.width, imageData.height);
-  const lines = detectLines(lineMask, imageData.width, imageData.height, options);
+  const rawLines = detectLines(lineMask, imageData.width, imageData.height, options);
+  const lines = snapLinesToCircles(rawLines, dots, options);
   const stroke = getForegroundColor(image, mask);
   const svg = renderConstellationSvg(imageData.width, imageData.height, dots, lines, stroke);
 

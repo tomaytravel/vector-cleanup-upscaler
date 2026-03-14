@@ -301,6 +301,19 @@ export function ControlsPanel(props: ControlsPanelProps) {
                 className="mt-2 w-full"
               />
             </label>
+            <label className="block text-sm text-mute">
+              Endpoint snap distance: <span className="font-semibold text-ink">{constellation.endpointSnapDistance}</span>
+              <input
+                type="range"
+                min={2}
+                max={36}
+                value={constellation.endpointSnapDistance}
+                onChange={(event) =>
+                  onConstellationChange({ endpointSnapDistance: Number(event.target.value) })
+                }
+                className="mt-2 w-full"
+              />
+            </label>
           </>
         )}
         <VectorStats stats={stats} />

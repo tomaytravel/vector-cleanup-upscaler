@@ -52,6 +52,7 @@ const initialConstellation: ConstellationOptions = {
   minLineLength: 6,
   maxLineThickness: 2.2,
   strokeWidthScale: 0.72,
+  endpointSnapDistance: 14,
 };
 
 const initialScale: ScaleOptions = {

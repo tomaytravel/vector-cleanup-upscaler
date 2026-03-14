@@ -31,6 +31,7 @@ export interface ConstellationOptions {
   minLineLength: number;
   maxLineThickness: number;
   strokeWidthScale: number;
+  endpointSnapDistance: number;
 }
 
 export interface ScaleOptions {
