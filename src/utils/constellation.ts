@@ -738,6 +738,56 @@ function scoreMaskAgainstSource(featureMask: Uint8Array, sourceMask: Uint8Array)
   return { overlap, outside };
 }
 
+function sampleLineCoverage(
+  line: LineFeature,
+  sourceMask: Uint8Array,
+  width: number,
+  height: number,
+) {
+  const dx = line.x2 - line.x1;
+  const dy = line.y2 - line.y1;
+  const length = Math.hypot(dx, dy);
+  const steps = Math.max(2, Math.ceil(length));
+  let onSource = 0;
+
+  for (let step = 0; step <= steps; step += 1) {
+    const t = step / steps;
+    const x = Math.round(line.x1 + dx * t);
+    const y = Math.round(line.y1 + dy * t);
+    if (x < 0 || x >= width || y < 0 || y >= height) {
+      continue;
+    }
+    if (sourceMask[getIndex(x, y, width)]) {
+      onSource += 1;
+    }
+  }
+
+  return onSource / (steps + 1);
+}
+
+function endpointTouchesCircle(line: LineFeature, circles: CircleFeature[]) {
+  const start = { x: line.x1, y: line.y1 };
+  const end = { x: line.x2, y: line.y2 };
+  let startValid = false;
+  let endValid = false;
+
+  for (const circle of circles) {
+    const center = { x: circle.cx, y: circle.cy };
+    const startDistance = Math.sqrt(distanceSquared(start, center));
+    const endDistance = Math.sqrt(distanceSquared(end, center));
+    const touchDistance = Math.max(circle.radius * 1.6, 1.5);
+
+    if (startDistance <= touchDistance) {
+      startValid = true;
+    }
+    if (endDistance <= touchDistance) {
+      endValid = true;
+    }
+  }
+
+  return { startValid, endValid };
+}
+
 function pruneExcessFeatures(
   sourceMask: Uint8Array,
   width: number,
@@ -756,6 +806,23 @@ function pruneExcessFeatures(
   });
 
   return { circles: keptCircles, lines: keptLines };
+}
+
+function pruneStructurallyInvalidLines(
+  sourceMask: Uint8Array,
+  width: number,
+  height: number,
+  circles: CircleFeature[],
+  lines: LineFeature[],
+) {
+  const keptLines = lines.filter((line) => {
+    const coverage = sampleLineCoverage(line, sourceMask, width, height);
+    const touch = endpointTouchesCircle(line, circles);
+    const validEndpoints = Number(touch.startValid) + Number(touch.endValid);
+    return coverage >= 0.55 && validEndpoints >= 1;
+  });
+
+  return { circles, lines: keptLines };
 }
 
 function recoverMissingFeatures(
@@ -1021,9 +1088,21 @@ export function vectorizeConstellation(
       recovered.circles,
       recovered.lines,
     );
+    const structurallyPruned = pruneStructurallyInvalidLines(
+      mask,
+      imageData.width,
+      imageData.height,
+      pruned.circles,
+      pruned.lines,
+    );
+    const resnapped = snapLinesToCircles(
+      structurallyPruned.lines,
+      structurallyPruned.circles,
+      options,
+    );
 
-    workingCircles = pruned.circles;
-    workingLines = pruned.lines;
+    workingCircles = resnapped.circles;
+    workingLines = resnapped.lines;
   }
 
   const normalized = downscaleFeatures(workingCircles, workingLines, detectionScale);
