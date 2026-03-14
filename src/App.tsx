@@ -84,6 +84,14 @@ const initialStatus: ProcessingState = {
   transparency: 'idle',
 };
 
+function flushUiFrame() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
+}
+
 export default function App() {
   const [appMode, setAppMode] = useState<AppMode>('cleanup');
   const [file, setFile] = useState<File | null>(null);
@@ -184,13 +192,23 @@ export default function App() {
     try {
       setBusy(true);
       setError(null);
-      const image = await loadImage(originalSrc);
-
       setStatus((current) => ({ ...current, preprocess: 'running', vectorize: 'idle', render: 'idle', transparency: 'idle' }));
+      await flushUiFrame();
+
+      const image = await loadImage(originalSrc);
       let svg = '';
       let nextStats: VectorStatsData;
 
       if (appMode === 'constellation') {
+        setStatus((current) => ({
+          ...current,
+          preprocess: 'done',
+          vectorize: 'running',
+          render: 'idle',
+          transparency: 'idle',
+        }));
+        await flushUiFrame();
+
         const result = vectorizeConstellation(image, constellation);
         svg = result.svg;
         nextStats = result.stats;
@@ -202,11 +220,18 @@ export default function App() {
           }
           return overlayUrl;
         });
-        setStatus((current) => ({ ...current, preprocess: 'done', vectorize: 'running' }));
       } else {
         setDebugOverlay(null);
         const preprocessed = preprocessImage(image, preprocess);
-        setStatus((current) => ({ ...current, preprocess: 'done', vectorize: 'running' }));
+        setStatus((current) => ({
+          ...current,
+          preprocess: 'done',
+          vectorize: 'running',
+          render: 'idle',
+          transparency: 'idle',
+        }));
+        await flushUiFrame();
+
         const rawSvg = vectorizeImageData(preprocessed.imageData);
         const simplified = simplifySvg(rawSvg, {
           ...vectorize,
@@ -219,6 +244,7 @@ export default function App() {
       setVectorSvg(svg);
       setStats(nextStats);
       setStatus((current) => ({ ...current, vectorize: 'done', render: 'running' }));
+      await flushUiFrame();
 
       const renderedCanvas = await renderSvgToCanvas(svg, {
         width: scale.width,
@@ -229,6 +255,7 @@ export default function App() {
       });
 
       setStatus((current) => ({ ...current, render: 'done', transparency: transparency.enabled ? 'running' : 'idle' }));
+      await flushUiFrame();
       const outputCanvas = transparency.enabled
         ? colorToAlpha(renderedCanvas, {
             target: hexToRgb(transparency.targetHex),
