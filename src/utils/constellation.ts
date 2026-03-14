@@ -30,6 +30,12 @@ interface LineFeature {
   strokeWidth: number;
 }
 
+interface SkeletonNode {
+  id: string;
+  x: number;
+  y: number;
+}
+
 interface ConstellationResult {
   svg: string;
   stats: VectorStatsData;
@@ -218,75 +224,9 @@ function detectLines(
   height: number,
   options: ConstellationOptions,
 ): LineFeature[] {
-  const components = connectedComponents(mask, width, height);
-  const lines: LineFeature[] = [];
-
-  for (const component of components) {
-    if (component.area < 2) {
-      continue;
-    }
-
-    const boxWidth = component.maxX - component.minX + 1;
-    const boxHeight = component.maxY - component.minY + 1;
-    const longAxis = Math.max(boxWidth, boxHeight);
-    const shortAxis = Math.max(1, Math.min(boxWidth, boxHeight));
-    const elongation = longAxis / shortAxis;
-
-    const centroid = component.centroid;
-    let covXX = 0;
-    let covXY = 0;
-    let covYY = 0;
-
-    for (const point of component.points) {
-      const dx = point.x - centroid.x;
-      const dy = point.y - centroid.y;
-      covXX += dx * dx;
-      covXY += dx * dy;
-      covYY += dy * dy;
-    }
-
-    const theta = 0.5 * Math.atan2(2 * covXY, covXX - covYY);
-    const dirX = Math.cos(theta);
-    const dirY = Math.sin(theta);
-    const normalX = -dirY;
-    const normalY = dirX;
-
-    let minProjection = Number.POSITIVE_INFINITY;
-    let maxProjection = Number.NEGATIVE_INFINITY;
-    let normalVariance = 0;
-
-    for (const point of component.points) {
-      const dx = point.x - centroid.x;
-      const dy = point.y - centroid.y;
-      const projection = dx * dirX + dy * dirY;
-      const distance = dx * normalX + dy * normalY;
-      minProjection = Math.min(minProjection, projection);
-      maxProjection = Math.max(maxProjection, projection);
-      normalVariance += distance * distance;
-    }
-
-    const length = maxProjection - minProjection;
-    if (length < options.minLineLength || elongation < 2.2) {
-      continue;
-    }
-
-    const varianceThickness = 2 * Math.sqrt(normalVariance / component.points.length);
-    const bboxThickness = shortAxis * 0.9;
-    const thickness = Math.max(
-      0.45,
-      Math.min(options.maxLineThickness, Math.min(varianceThickness, bboxThickness)),
-    );
-
-    lines.push({
-      x1: centroid.x + minProjection * dirX,
-      y1: centroid.y + minProjection * dirY,
-      x2: centroid.x + maxProjection * dirX,
-      y2: centroid.y + maxProjection * dirY,
-      strokeWidth: Math.max(0.4, thickness * options.strokeWidthScale),
-    });
-  }
-
-  return lines;
+  const skeleton = skeletonize(mask, width, height);
+  const nodes = findSkeletonNodes(skeleton, width, height);
+  return traceSkeletonLines(skeleton, mask, width, height, nodes, options);
 }
 
 function distanceSquared(a: Point, b: Point) {
@@ -326,6 +266,287 @@ function mergeCircles(circles: CircleFeature[], options: ConstellationOptions): 
   }
 
   return merged;
+}
+
+function getIndex(x: number, y: number, width: number) {
+  return y * width + x;
+}
+
+function getNeighbors(x: number, y: number, width: number, height: number): Point[] {
+  const neighbors: Point[] = [];
+  for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      if (offsetX === 0 && offsetY === 0) {
+        continue;
+      }
+      const nextX = x + offsetX;
+      const nextY = y + offsetY;
+      if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height) {
+        continue;
+      }
+      neighbors.push({ x: nextX, y: nextY });
+    }
+  }
+  return neighbors;
+}
+
+function countForegroundNeighbors(mask: Uint8Array, x: number, y: number, width: number, height: number) {
+  return getNeighbors(x, y, width, height).filter((point) => mask[getIndex(point.x, point.y, width)]).length;
+}
+
+function countTransitions(mask: Uint8Array, x: number, y: number, width: number) {
+  const positions = [
+    [x, y - 1],
+    [x + 1, y - 1],
+    [x + 1, y],
+    [x + 1, y + 1],
+    [x, y + 1],
+    [x - 1, y + 1],
+    [x - 1, y],
+    [x - 1, y - 1],
+  ];
+
+  let transitions = 0;
+  for (let i = 0; i < positions.length; i += 1) {
+    const [ax, ay] = positions[i];
+    const [bx, by] = positions[(i + 1) % positions.length];
+    const a = mask[getIndex(ax, ay, width)];
+    const b = mask[getIndex(bx, by, width)];
+    if (!a && b) {
+      transitions += 1;
+    }
+  }
+  return transitions;
+}
+
+function skeletonize(mask: Uint8Array, width: number, height: number): Uint8Array {
+  const working = new Uint8Array(mask);
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+    const toRemoveStep1: number[] = [];
+
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const index = getIndex(x, y, width);
+        if (!working[index]) {
+          continue;
+        }
+
+        const neighbors = countForegroundNeighbors(working, x, y, width, height);
+        const transitions = countTransitions(working, x, y, width);
+        const p2 = working[getIndex(x, y - 1, width)];
+        const p4 = working[getIndex(x + 1, y, width)];
+        const p6 = working[getIndex(x, y + 1, width)];
+        const p8 = working[getIndex(x - 1, y, width)];
+
+        if (
+          neighbors >= 2 &&
+          neighbors <= 6 &&
+          transitions === 1 &&
+          !(p2 && p4 && p6) &&
+          !(p4 && p6 && p8)
+        ) {
+          toRemoveStep1.push(index);
+        }
+      }
+    }
+
+    if (toRemoveStep1.length) {
+      changed = true;
+      for (const index of toRemoveStep1) {
+        working[index] = 0;
+      }
+    }
+
+    const toRemoveStep2: number[] = [];
+
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const index = getIndex(x, y, width);
+        if (!working[index]) {
+          continue;
+        }
+
+        const neighbors = countForegroundNeighbors(working, x, y, width, height);
+        const transitions = countTransitions(working, x, y, width);
+        const p2 = working[getIndex(x, y - 1, width)];
+        const p4 = working[getIndex(x + 1, y, width)];
+        const p6 = working[getIndex(x, y + 1, width)];
+        const p8 = working[getIndex(x - 1, y, width)];
+
+        if (
+          neighbors >= 2 &&
+          neighbors <= 6 &&
+          transitions === 1 &&
+          !(p2 && p4 && p8) &&
+          !(p2 && p6 && p8)
+        ) {
+          toRemoveStep2.push(index);
+        }
+      }
+    }
+
+    if (toRemoveStep2.length) {
+      changed = true;
+      for (const index of toRemoveStep2) {
+        working[index] = 0;
+      }
+    }
+  }
+
+  return working;
+}
+
+function findSkeletonNodes(mask: Uint8Array, width: number, height: number): Map<string, SkeletonNode> {
+  const nodes = new Map<string, SkeletonNode>();
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = getIndex(x, y, width);
+      if (!mask[index]) {
+        continue;
+      }
+
+      const neighborCount = countForegroundNeighbors(mask, x, y, width, height);
+      if (neighborCount !== 2) {
+        const id = `${x},${y}`;
+        nodes.set(id, { id, x, y });
+      }
+    }
+  }
+
+  return nodes;
+}
+
+function pointKey(point: Point) {
+  return `${point.x},${point.y}`;
+}
+
+function segmentKey(a: Point, b: Point) {
+  const ak = pointKey(a);
+  const bk = pointKey(b);
+  return ak < bk ? `${ak}|${bk}` : `${bk}|${ak}`;
+}
+
+function estimateStrokeWidth(
+  sourceMask: Uint8Array,
+  center: Point,
+  direction: Point,
+  width: number,
+  height: number,
+  options: ConstellationOptions,
+) {
+  const length = Math.hypot(direction.x, direction.y) || 1;
+  const nx = -direction.y / length;
+  const ny = direction.x / length;
+  let positive = 0;
+  let negative = 0;
+
+  for (let step = 1; step <= options.maxLineThickness; step += 1) {
+    const px = Math.round(center.x + nx * step);
+    const py = Math.round(center.y + ny * step);
+    if (px < 0 || px >= width || py < 0 || py >= height || !sourceMask[getIndex(px, py, width)]) {
+      break;
+    }
+    positive += 1;
+  }
+
+  for (let step = 1; step <= options.maxLineThickness; step += 1) {
+    const px = Math.round(center.x - nx * step);
+    const py = Math.round(center.y - ny * step);
+    if (px < 0 || px >= width || py < 0 || py >= height || !sourceMask[getIndex(px, py, width)]) {
+      break;
+    }
+    negative += 1;
+  }
+
+  return Math.max(0.4, (positive + negative + 1) * options.strokeWidthScale);
+}
+
+function traceSkeletonLines(
+  skeletonMask: Uint8Array,
+  sourceMask: Uint8Array,
+  width: number,
+  height: number,
+  nodes: Map<string, SkeletonNode>,
+  options: ConstellationOptions,
+): LineFeature[] {
+  const visited = new Set<string>();
+  const lines: LineFeature[] = [];
+
+  const walkSegment = (start: Point, next: Point): Point[] => {
+    const path = [start, next];
+    let previous = start;
+    let current = next;
+
+    while (!nodes.has(pointKey(current))) {
+      const nextPoints = getNeighbors(current.x, current.y, width, height).filter((point) => {
+        if (!skeletonMask[getIndex(point.x, point.y, width)]) {
+          return false;
+        }
+        return !(point.x === previous.x && point.y === previous.y);
+      });
+
+      if (!nextPoints.length) {
+        break;
+      }
+
+      previous = current;
+      current = nextPoints[0];
+      path.push(current);
+    }
+
+    return path;
+  };
+
+  for (const node of nodes.values()) {
+    const neighbors = getNeighbors(node.x, node.y, width, height).filter((point) =>
+      skeletonMask[getIndex(point.x, point.y, width)],
+    );
+
+    for (const neighbor of neighbors) {
+      const edgeKey = segmentKey(node, neighbor);
+      if (visited.has(edgeKey)) {
+        continue;
+      }
+
+      const path = walkSegment(node, neighbor);
+      for (let i = 0; i < path.length - 1; i += 1) {
+        visited.add(segmentKey(path[i], path[i + 1]));
+      }
+
+      const start = path[0];
+      const end = path[path.length - 1];
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const length = Math.hypot(dx, dy);
+      if (length < options.minLineLength) {
+        continue;
+      }
+
+      const midpoint = path[Math.floor(path.length / 2)];
+      const strokeWidth = estimateStrokeWidth(
+        sourceMask,
+        midpoint,
+        { x: dx, y: dy },
+        width,
+        height,
+        options,
+      );
+
+      lines.push({
+        x1: start.x,
+        y1: start.y,
+        x2: end.x,
+        y2: end.y,
+        strokeWidth: Math.min(options.maxLineThickness, strokeWidth),
+      });
+    }
+  }
+
+  return lines;
 }
 
 function snapLinesToCircles(
