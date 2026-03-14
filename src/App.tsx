@@ -112,9 +112,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [sourceSize, setSourceSize] = useState({ width: 0, height: 0 });
   const [browserMemoryMb, setBrowserMemoryMb] = useState<number | null>(null);
+  const [uiNow, setUiNow] = useState(() => Date.now());
 
   const originalCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const finalCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const processStartedAtRef = useRef<number | null>(null);
+  const stageStartedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
@@ -140,12 +143,18 @@ export default function App() {
         ? performance.memory.usedJSHeapSize / (1024 * 1024)
         : null;
       setBrowserMemoryMb(nextValue);
+      setUiNow(Date.now());
     };
 
     updateMemory();
     const interval = window.setInterval(updateMemory, 600);
     return () => window.clearInterval(interval);
   }, [busy]);
+
+  const updateProcessingStatus = (patch: Partial<ProcessingState>) => {
+    stageStartedAtRef.current = Date.now();
+    setStatus((current) => ({ ...current, ...patch }));
+  };
 
   const handleFileSelect = async (selectedFile: File) => {
     setError(null);
@@ -192,7 +201,13 @@ export default function App() {
     try {
       setBusy(true);
       setError(null);
-      setStatus((current) => ({ ...current, preprocess: 'running', vectorize: 'idle', render: 'idle', transparency: 'idle' }));
+      processStartedAtRef.current = Date.now();
+      updateProcessingStatus({
+        preprocess: 'running',
+        vectorize: 'idle',
+        render: 'idle',
+        transparency: 'idle',
+      });
       await flushUiFrame();
 
       const image = await loadImage(originalSrc);
@@ -200,13 +215,12 @@ export default function App() {
       let nextStats: VectorStatsData;
 
       if (appMode === 'constellation') {
-        setStatus((current) => ({
-          ...current,
+        updateProcessingStatus({
           preprocess: 'done',
           vectorize: 'running',
           render: 'idle',
           transparency: 'idle',
-        }));
+        });
         await flushUiFrame();
 
         const result = vectorizeConstellation(image, constellation);
@@ -223,13 +237,12 @@ export default function App() {
       } else {
         setDebugOverlay(null);
         const preprocessed = preprocessImage(image, preprocess);
-        setStatus((current) => ({
-          ...current,
+        updateProcessingStatus({
           preprocess: 'done',
           vectorize: 'running',
           render: 'idle',
           transparency: 'idle',
-        }));
+        });
         await flushUiFrame();
 
         const rawSvg = vectorizeImageData(preprocessed.imageData);
@@ -243,7 +256,7 @@ export default function App() {
 
       setVectorSvg(svg);
       setStats(nextStats);
-      setStatus((current) => ({ ...current, vectorize: 'done', render: 'running' }));
+      updateProcessingStatus({ vectorize: 'done', render: 'running' });
       await flushUiFrame();
 
       const renderedCanvas = await renderSvgToCanvas(svg, {
@@ -254,7 +267,10 @@ export default function App() {
         postProcess: scale.postProcess,
       });
 
-      setStatus((current) => ({ ...current, render: 'done', transparency: transparency.enabled ? 'running' : 'idle' }));
+      updateProcessingStatus({
+        render: 'done',
+        transparency: transparency.enabled ? 'running' : 'idle',
+      });
       await flushUiFrame();
       const outputCanvas = transparency.enabled
         ? colorToAlpha(renderedCanvas, {
@@ -272,15 +288,16 @@ export default function App() {
         }
         return finalPreviewUrl;
       });
-      setStatus((current) => ({
-        ...current,
+      updateProcessingStatus({
         transparency: transparency.enabled ? 'done' : 'idle',
-      }));
+      });
     } catch (processingError) {
       const message = processingError instanceof Error ? processingError.message : 'Processing failed.';
       setError(message);
     } finally {
       setBusy(false);
+      processStartedAtRef.current = null;
+      stageStartedAtRef.current = null;
     }
   };
 
@@ -303,6 +320,8 @@ export default function App() {
     setError(null);
     setStatus(initialStatus);
     setBusy(false);
+    processStartedAtRef.current = null;
+    stageStartedAtRef.current = null;
     setSourceSize({ width: 0, height: 0 });
     originalCanvasRef.current = null;
     finalCanvasRef.current = null;
@@ -324,19 +343,39 @@ export default function App() {
 
   const progressInfo = (() => {
     if (status.transparency === 'done') {
-      return { progress: 100, label: 'Finalizing transparent PNG preview.' };
+      return {
+        progress: 100,
+        label: 'Finalizing transparent PNG preview.',
+        currentTask: 'PNG preview finalize',
+      };
     }
     if (status.transparency === 'running') {
-      return { progress: 92, label: 'Applying color-to-alpha cleanup.' };
+      return {
+        progress: 92,
+        label: 'Applying color-to-alpha cleanup.',
+        currentTask: 'Alpha cleanup pass',
+      };
     }
     if (status.render === 'done') {
-      return { progress: 84, label: 'Render complete. Preparing post-processing.' };
+      return {
+        progress: 84,
+        label: 'Render complete. Preparing post-processing.',
+        currentTask: 'Render output ready',
+      };
     }
     if (status.render === 'running') {
-      return { progress: 72, label: 'Rendering high-resolution bitmap from vector data.' };
+      return {
+        progress: 72,
+        label: 'Rendering high-resolution bitmap from vector data.',
+        currentTask: 'High-resolution render',
+      };
     }
     if (status.vectorize === 'done') {
-      return { progress: 58, label: 'Vector reconstruction complete. Queueing render.' };
+      return {
+        progress: 58,
+        label: 'Vector reconstruction complete. Queueing render.',
+        currentTask: 'Vector stage complete',
+      };
     }
     if (status.vectorize === 'running') {
       return {
@@ -345,19 +384,43 @@ export default function App() {
           appMode === 'constellation'
             ? 'Tracing constellation nodes and segments.'
             : 'Generating and cleaning SVG paths.',
+        currentTask:
+          appMode === 'constellation'
+            ? 'Constellation node/edge tracing'
+            : 'SVG path generation',
       };
     }
     if (status.preprocess === 'done') {
-      return { progress: 28, label: 'Mask extraction complete. Starting vector step.' };
+      return {
+        progress: 28,
+        label: 'Mask extraction complete. Starting vector step.',
+        currentTask: 'Preprocess complete',
+      };
     }
     if (status.preprocess === 'running') {
-      return { progress: 16, label: 'Preparing masks and analysis buffers.' };
+      return {
+        progress: 16,
+        label: 'Preparing masks and analysis buffers.',
+        currentTask: 'Mask preparation',
+      };
     }
     if (status.upload === 'ready') {
-      return { progress: 6, label: 'Source ready. Waiting to process.' };
+      return {
+        progress: 6,
+        label: 'Source ready. Waiting to process.',
+        currentTask: 'Ready',
+      };
     }
-    return { progress: 0, label: 'Waiting for work.' };
+    return { progress: 0, label: 'Waiting for work.', currentTask: 'Idle' };
   })();
+
+  const stageElapsedMs = stageStartedAtRef.current ? Math.max(0, uiNow - stageStartedAtRef.current) : 0;
+  const wallClockLabel = new Intl.DateTimeFormat('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(uiNow);
 
   const handleSampleColor = async (x: number, y: number) => {
     try {
@@ -525,6 +588,9 @@ export default function App() {
         status={status}
         progress={progressInfo.progress}
         label={progressInfo.label}
+        currentTask={progressInfo.currentTask}
+        stageElapsedMs={stageElapsedMs}
+        wallClockLabel={wallClockLabel}
         browserMemoryMb={browserMemoryMb}
         estimatedMemoryMb={estimatedMemoryMb}
       />

@@ -5,6 +5,9 @@ interface ProgressModalProps {
   status: ProcessingState;
   progress: number;
   label: string;
+  currentTask: string;
+  stageElapsedMs: number;
+  wallClockLabel: string;
   browserMemoryMb: number | null;
   estimatedMemoryMb: number;
 }
@@ -29,6 +32,9 @@ export function ProgressModal({
   status,
   progress,
   label,
+  currentTask,
+  stageElapsedMs,
+  wallClockLabel,
   browserMemoryMb,
   estimatedMemoryMb,
 }: ProgressModalProps) {
@@ -56,6 +62,23 @@ export function ProgressModal({
             className="h-full rounded-full bg-gradient-to-r from-accent to-accentWarm transition-all duration-300"
             style={{ width: `${progress}%` }}
           />
+        </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl bg-white/[0.05] p-4">
+            <p className="text-xs uppercase tracking-[0.2em] text-mute">Current Task</p>
+            <p className="mt-2 text-sm font-semibold text-white">{currentTask}</p>
+          </div>
+          <div className="rounded-2xl bg-white/[0.05] p-4">
+            <p className="text-xs uppercase tracking-[0.2em] text-mute">Step Elapsed</p>
+            <p className="mt-2 text-2xl font-semibold text-white">
+              {(stageElapsedMs / 1000).toFixed(1)}s
+            </p>
+          </div>
+          <div className="rounded-2xl bg-white/[0.05] p-4">
+            <p className="text-xs uppercase tracking-[0.2em] text-mute">Current Time</p>
+            <p className="mt-2 text-2xl font-semibold text-white">{wallClockLabel}</p>
+          </div>
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
