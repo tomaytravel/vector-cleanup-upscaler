@@ -42,3 +42,13 @@ interface EyeDropperConstructor {
 interface Window {
   EyeDropper?: EyeDropperConstructor;
 }
+
+interface MemoryInfo {
+  usedJSHeapSize: number;
+  totalJSHeapSize: number;
+  jsHeapSizeLimit: number;
+}
+
+interface Performance {
+  memory?: MemoryInfo;
+}

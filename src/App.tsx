@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ControlsPanel } from './components/ControlsPanel';
 import { PreviewPane } from './components/PreviewPane';
+import { ProgressModal } from './components/ProgressModal';
 import {
   AppMode,
   ConstellationOptions,
@@ -102,6 +103,7 @@ export default function App() {
   const [eyedropperActive, setEyedropperActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sourceSize, setSourceSize] = useState({ width: 0, height: 0 });
+  const [browserMemoryMb, setBrowserMemoryMb] = useState<number | null>(null);
 
   const originalCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const finalCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -120,9 +122,28 @@ export default function App() {
     };
   }, [debugOverlay, finalPreview, originalSrc]);
 
+  useEffect(() => {
+    if (!busy) {
+      return undefined;
+    }
+
+    const updateMemory = () => {
+      const nextValue = performance.memory?.usedJSHeapSize
+        ? performance.memory.usedJSHeapSize / (1024 * 1024)
+        : null;
+      setBrowserMemoryMb(nextValue);
+    };
+
+    updateMemory();
+    const interval = window.setInterval(updateMemory, 600);
+    return () => window.clearInterval(interval);
+  }, [busy]);
+
   const handleFileSelect = async (selectedFile: File) => {
     setError(null);
     setBusy(false);
+    disposeCanvas(originalCanvasRef.current);
+    disposeCanvas(finalCanvasRef.current);
     setFile(selectedFile);
     setVectorSvg(null);
     setFinalPreview(null);
@@ -244,6 +265,8 @@ export default function App() {
   };
 
   const handleReset = () => {
+    disposeCanvas(originalCanvasRef.current);
+    disposeCanvas(finalCanvasRef.current);
     setFile(null);
     setOriginalSrc(null);
     setVectorSvg(null);
@@ -257,6 +280,57 @@ export default function App() {
     originalCanvasRef.current = null;
     finalCanvasRef.current = null;
   };
+
+  const estimatedMemoryMb = (() => {
+    const sourcePixels = sourceSize.width * sourceSize.height;
+    const detectionPixels =
+      appMode === 'constellation'
+        ? sourcePixels * constellation.detectionScale * constellation.detectionScale
+        : sourcePixels;
+    const outputPixels = scale.width * scale.height;
+    const approximateBytes =
+      sourcePixels * 4 * 2 +
+      detectionPixels * 4 * 5 +
+      outputPixels * 4 * 3;
+    return approximateBytes / (1024 * 1024);
+  })();
+
+  const progressInfo = (() => {
+    if (status.transparency === 'done') {
+      return { progress: 100, label: 'Finalizing transparent PNG preview.' };
+    }
+    if (status.transparency === 'running') {
+      return { progress: 92, label: 'Applying color-to-alpha cleanup.' };
+    }
+    if (status.render === 'done') {
+      return { progress: 84, label: 'Render complete. Preparing post-processing.' };
+    }
+    if (status.render === 'running') {
+      return { progress: 72, label: 'Rendering high-resolution bitmap from vector data.' };
+    }
+    if (status.vectorize === 'done') {
+      return { progress: 58, label: 'Vector reconstruction complete. Queueing render.' };
+    }
+    if (status.vectorize === 'running') {
+      return {
+        progress: 44,
+        label:
+          appMode === 'constellation'
+            ? 'Tracing constellation nodes and segments.'
+            : 'Generating and cleaning SVG paths.',
+      };
+    }
+    if (status.preprocess === 'done') {
+      return { progress: 28, label: 'Mask extraction complete. Starting vector step.' };
+    }
+    if (status.preprocess === 'running') {
+      return { progress: 16, label: 'Preparing masks and analysis buffers.' };
+    }
+    if (status.upload === 'ready') {
+      return { progress: 6, label: 'Source ready. Waiting to process.' };
+    }
+    return { progress: 0, label: 'Waiting for work.' };
+  })();
 
   const handleSampleColor = async (x: number, y: number) => {
     try {
@@ -419,6 +493,14 @@ export default function App() {
           </div>
         </div>
       </div>
+      <ProgressModal
+        open={busy}
+        status={status}
+        progress={progressInfo.progress}
+        label={progressInfo.label}
+        browserMemoryMb={browserMemoryMb}
+        estimatedMemoryMb={estimatedMemoryMb}
+      />
     </div>
   );
 }
