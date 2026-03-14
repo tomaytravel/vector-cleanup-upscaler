@@ -27,6 +27,18 @@ export function VectorStats({ stats }: VectorStatsProps) {
         <p className="text-mute">Vector height</p>
         <p className="mt-2 text-2xl font-semibold text-ink">{stats.height}</p>
       </div>
+      {typeof stats.circleCount === 'number' ? (
+        <div className="rounded-2xl bg-white/[0.04] p-3">
+          <p className="text-mute">Circle count</p>
+          <p className="mt-2 text-2xl font-semibold text-ink">{stats.circleCount}</p>
+        </div>
+      ) : null}
+      {typeof stats.lineCount === 'number' ? (
+        <div className="rounded-2xl bg-white/[0.04] p-3">
+          <p className="text-mute">Line count</p>
+          <p className="mt-2 text-2xl font-semibold text-ink">{stats.lineCount}</p>
+        </div>
+      ) : null}
     </div>
   );
 }

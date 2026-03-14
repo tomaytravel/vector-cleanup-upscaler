@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ControlsPanel } from './components/ControlsPanel';
 import { PreviewPane } from './components/PreviewPane';
 import {
+  AppMode,
+  ConstellationOptions,
   PreprocessOptions,
   ProcessingState,
   ScaleOptions,
@@ -21,6 +23,7 @@ import {
   sampleCanvasColor,
 } from './utils/image';
 import { preprocessImage } from './utils/preprocess';
+import { vectorizeConstellation } from './utils/constellation';
 import { renderSvgToCanvas } from './utils/renderSvgToCanvas';
 import { simplifySvg } from './utils/simplifySvg';
 import { vectorizeImageData } from './utils/vectorize';
@@ -37,6 +40,18 @@ const initialVectorize: VectorizeOptions = {
   minPathArea: 10,
   minDimension: 2,
   simplifyTolerance: 2,
+};
+
+const initialConstellation: ConstellationOptions = {
+  threshold: 72,
+  invert: false,
+  minDotArea: 3,
+  maxDotArea: 180,
+  dotCircularity: 0.28,
+  dotScale: 1.05,
+  minLineLength: 4,
+  maxLineThickness: 10,
+  strokeWidthScale: 1.15,
 };
 
 const initialScale: ScaleOptions = {
@@ -64,12 +79,14 @@ const initialStatus: ProcessingState = {
 };
 
 export default function App() {
+  const [appMode, setAppMode] = useState<AppMode>('cleanup');
   const [file, setFile] = useState<File | null>(null);
   const [originalSrc, setOriginalSrc] = useState<string | null>(null);
   const [vectorSvg, setVectorSvg] = useState<string | null>(null);
   const [finalPreview, setFinalPreview] = useState<string | null>(null);
   const [preprocess, setPreprocess] = useState<PreprocessOptions>(initialPreprocess);
   const [vectorize, setVectorize] = useState<VectorizeOptions>(initialVectorize);
+  const [constellation, setConstellation] = useState<ConstellationOptions>(initialConstellation);
   const [scale, setScale] = useState<ScaleOptions>(initialScale);
   const [transparency, setTransparency] = useState<TransparencyOptions>(initialTransparency);
   const [stats, setStats] = useState<VectorStatsData | null>(null);
@@ -139,14 +156,26 @@ export default function App() {
       const image = await loadImage(originalSrc);
 
       setStatus((current) => ({ ...current, preprocess: 'running', vectorize: 'idle', render: 'idle', transparency: 'idle' }));
-      const preprocessed = preprocessImage(image, preprocess);
-      setStatus((current) => ({ ...current, preprocess: 'done', vectorize: 'running' }));
+      let svg = '';
+      let nextStats: VectorStatsData;
 
-      const rawSvg = vectorizeImageData(preprocessed.imageData);
-      const { svg, stats: nextStats } = simplifySvg(rawSvg, {
-        ...vectorize,
-        simplifyTolerance: vectorize.simplifyTolerance + preprocess.simplifyAmount / 2,
-      });
+      if (appMode === 'constellation') {
+        const result = vectorizeConstellation(image, constellation);
+        svg = result.svg;
+        nextStats = result.stats;
+        setStatus((current) => ({ ...current, preprocess: 'done', vectorize: 'running' }));
+      } else {
+        const preprocessed = preprocessImage(image, preprocess);
+        setStatus((current) => ({ ...current, preprocess: 'done', vectorize: 'running' }));
+        const rawSvg = vectorizeImageData(preprocessed.imageData);
+        const simplified = simplifySvg(rawSvg, {
+          ...vectorize,
+          simplifyTolerance: vectorize.simplifyTolerance + preprocess.simplifyAmount / 2,
+        });
+        svg = simplified.svg;
+        nextStats = simplified.stats;
+      }
+
       setVectorSvg(svg);
       setStats(nextStats);
       setStatus((current) => ({ ...current, vectorize: 'done', render: 'running' }));
@@ -235,10 +264,30 @@ export default function App() {
               <h1 className="mt-2 text-3xl font-bold tracking-tight text-white">
                 Raster cleanup, vector rebuild, upscale, transparency export.
               </h1>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {([
+                  ['cleanup', 'Cleanup Upscaler'],
+                  ['constellation', 'Constellation Vectorizer'],
+                ] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setAppMode(mode)}
+                    className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                      appMode === mode
+                        ? 'bg-accent text-slate-950'
+                        : 'bg-white/10 text-ink hover:bg-white/20'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
             <p className="max-w-2xl text-sm text-mute">
-              선화와 기하학 그래픽에 최적화된 브라우저 전용 파이프라인입니다. 업로드 후 벡터화하고,
-              고해상도 PNG로 다시 렌더링한 뒤 지정 색상을 투명하게 제거할 수 있습니다.
+              {appMode === 'cleanup'
+                ? '선화와 기하학 그래픽에 최적화된 일반 정리 파이프라인입니다. 업로드 후 벡터화하고, 고해상도 PNG로 다시 렌더링한 뒤 지정 색상을 투명하게 제거할 수 있습니다.'
+                : '별자리 그래픽처럼 점과 선이 분명한 이미지를 위한 전용 파이프라인입니다. 점은 정확한 벡터 원으로, 선은 굵기와 좌표를 가진 벡터 선분으로 재배치합니다.'}
             </p>
           </div>
         </header>
@@ -247,8 +296,10 @@ export default function App() {
           <aside className="min-w-0">
             <ControlsPanel
               fileName={file?.name}
+              appMode={appMode}
               preprocess={preprocess}
               vectorize={vectorize}
+              constellation={constellation}
               scale={scale}
               transparency={transparency}
               status={status}
@@ -259,6 +310,9 @@ export default function App() {
               onFileSelect={(selected) => void handleFileSelect(selected)}
               onPreprocessChange={(patch) => setPreprocess((current) => ({ ...current, ...patch }))}
               onVectorizeChange={(patch) => setVectorize((current) => ({ ...current, ...patch }))}
+              onConstellationChange={(patch) =>
+                setConstellation((current) => ({ ...current, ...patch }))
+              }
               onScaleChange={(patch) => setScale((current) => ({ ...current, ...patch }))}
               onTransparencyChange={(patch) => setTransparency((current) => ({ ...current, ...patch }))}
               onEyedropper={() => setEyedropperActive((current) => !current)}

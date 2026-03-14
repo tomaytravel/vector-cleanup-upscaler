@@ -1,4 +1,5 @@
 export type BackgroundMode = 'transparent' | 'white' | 'black';
+export type AppMode = 'cleanup' | 'constellation';
 
 export type ScalePreset = '2x' | '4x' | 'custom';
 
@@ -18,6 +19,18 @@ export interface VectorizeOptions {
   minPathArea: number;
   minDimension: number;
   simplifyTolerance: number;
+}
+
+export interface ConstellationOptions {
+  threshold: number;
+  invert: boolean;
+  minDotArea: number;
+  maxDotArea: number;
+  dotCircularity: number;
+  dotScale: number;
+  minLineLength: number;
+  maxLineThickness: number;
+  strokeWidthScale: number;
 }
 
 export interface ScaleOptions {
@@ -41,6 +54,8 @@ export interface VectorStatsData {
   width: number;
   height: number;
   removedPaths: number;
+  circleCount?: number;
+  lineCount?: number;
 }
 
 export interface ProcessingState {
